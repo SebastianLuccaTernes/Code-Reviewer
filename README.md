@@ -15,14 +15,14 @@ The service verifies the webhook signature, answers right away, then in the back
 
 - **GitHub:** create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new). Resource owner: the user or organization that owns the repos. Repository access: the repos to review. Permissions: **Contents: Read** and **Pull requests: Read and write**. A fine-grained token covers the repos of one owner.
 - **Claude:** set exactly one. Run `claude setup-token` to use your Claude plan (`CLAUDE_CODE_OAUTH_TOKEN`), or create an API key in the Anthropic Console for API billing (`ANTHROPIC_API_KEY`, wins if both are set).
-- **Webhook secret:** any random string, for example `openssl rand -hex 32`.
+- **Webhook secret:** a random hex string, for example from `openssl rand -hex 32`. Avoid `$` in `.env` values; compose expands it.
 
 ### 2. Start the service
 
 ```sh
 cp .env.example .env          # fill in the values
 docker compose up -d --build
-curl http://localhost:8000/health   # {"ok":true}
+sleep 3; curl http://localhost:8000/health   # {"ok":true}
 ```
 
 ### 3. Make it reachable for GitHub
@@ -107,6 +107,6 @@ uv run --no-project --python 3.12 --with-requirements requirements.txt python -m
 
 The repo is public. Keep secrets in `.env` only; `.gitignore` excludes it.
 
-- Install the [gitleaks](https://github.com/gitleaks/gitleaks) pre-commit hook once per clone: `pip install pre-commit && pre-commit install`.
+- Install the [gitleaks](https://github.com/gitleaks/gitleaks) pre-commit hook once per clone: `uv tool install pre-commit && pre-commit install`.
 - Keep GitHub secret scanning and push protection enabled in the repo's security settings.
 - If a secret is ever committed, rotate it immediately. Cleaning the git history is not enough.
