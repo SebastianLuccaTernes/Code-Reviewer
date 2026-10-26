@@ -22,11 +22,13 @@ GH_TOKEN = os.getenv("GH_TOKEN", "")
 if not (WEBHOOK_SECRET and GH_TOKEN):
     sys.exit("Set GITHUB_WEBHOOK_SECRET and GH_TOKEN")
 ALLOWED_REPOS = {r.strip().lower() for r in os.getenv("ALLOWED_REPOS", "").split(",") if r.strip()}
+REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "900"))
 
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 GIT_AUTH = base64.b64encode(f"x-access-token:{GH_TOKEN}".encode()).decode()
 
 app = FastAPI()
+slots = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_REVIEWS", "2")))
 reviewed = set()  # "owner/repo@sha" already reviewed; in memory only
 
 
@@ -73,7 +75,8 @@ def trigger(event, payload):
 
 async def review(repo, number, manual):
     try:
-        await run_review(repo, number)
+        async with slots, asyncio.timeout(REVIEW_TIMEOUT):
+            await run_review(repo, number)
     except Exception:
         log.exception("review of %s#%s failed", repo, number)
 
@@ -107,7 +110,12 @@ async def run_review(repo, number):
 async def run(cmd, env):
     proc = await asyncio.create_subprocess_exec(*cmd, env=env, stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
+    try:
+        out, err = await proc.communicate()
+    finally:
+        if proc.returncode is None:  # cancelled by the review timeout
+            proc.kill()
+            await proc.wait()
     if proc.returncode:
         raise RuntimeError(f"{cmd[0]} exited with {proc.returncode}: {(err + out).decode(errors='replace')[-500:]}")
     return out.decode(errors="replace")

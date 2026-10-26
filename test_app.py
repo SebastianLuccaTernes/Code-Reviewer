@@ -1,10 +1,12 @@
 """Run with: python -m unittest. Uses fake values only."""
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import os
+import time
 import unittest
 from unittest import mock
 
@@ -137,3 +139,10 @@ class RunTest(unittest.IsolatedAsyncioTestCase):
     async def test_failure_reports_exit_code_and_output(self):
         with self.assertRaisesRegex(RuntimeError, "sh exited with 3: err\nout"):
             await app.run(["sh", "-c", "echo out; echo err >&2; exit 3"], self.env)
+
+    async def test_timeout_kills_the_process(self):
+        start = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await app.run(["sleep", "30"], self.env)
+        self.assertLess(time.monotonic() - start, 5)
