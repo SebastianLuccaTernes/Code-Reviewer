@@ -2,12 +2,14 @@
 
 import asyncio
 import base64
+import ctypes
 import hashlib
 import hmac
 import json
 import logging
 import os
 import re
+import shlex
 import sys
 import tempfile
 
@@ -19,13 +21,28 @@ log = logging.getLogger("reviewer")
 
 WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 GH_TOKEN = os.getenv("GH_TOKEN", "")
-if not (WEBHOOK_SECRET and GH_TOKEN):
-    sys.exit("Set GITHUB_WEBHOOK_SECRET and GH_TOKEN")
+# API billing wins over plan usage when both are set.
+CLAUDE_AUTH_VAR = "ANTHROPIC_API_KEY" if os.getenv("ANTHROPIC_API_KEY") else "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_AUTH = os.getenv(CLAUDE_AUTH_VAR, "")
+if not (WEBHOOK_SECRET and GH_TOKEN and CLAUDE_AUTH):
+    sys.exit("Set GITHUB_WEBHOOK_SECRET, GH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY")
 ALLOWED_REPOS = {r.strip().lower() for r in os.getenv("ALLOWED_REPOS", "").split(",") if r.strip()}
+REVIEW_PROMPT_FILE = os.getenv("REVIEW_PROMPT_FILE", "/app/review_prompt.md")
+REVIEW_LANGUAGE = os.getenv("REVIEW_LANGUAGE", "German")
+CLAUDE_ALLOWED_TOOLS = os.getenv("CLAUDE_ALLOWED_TOOLS", "Read,Grep,Glob")
+CLAUDE_DISALLOWED_TOOLS = os.getenv("CLAUDE_DISALLOWED_TOOLS", "Bash,Edit,Write,WebFetch,WebSearch")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "")
+CLAUDE_MAX_TURNS = os.getenv("CLAUDE_MAX_TURNS", "20")
+CLAUDE_EXTRA_ARGS = os.getenv("CLAUDE_EXTRA_ARGS", "")
+MAX_DIFF_CHARS = int(os.getenv("MAX_DIFF_CHARS", "150000"))
 REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "900"))
 
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 GIT_AUTH = base64.b64encode(f"x-access-token:{GH_TOKEN}".encode()).decode()
+
+# The agent runs as the same user; a non-dumpable process keeps its /proc/<pid>/environ (GH_TOKEN) from it.
+if sys.platform == "linux":
+    ctypes.CDLL(None).prctl(4, 0)  # PR_SET_DUMPABLE = 0
 
 app = FastAPI()
 slots = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_REVIEWS", "2")))
@@ -76,7 +93,8 @@ def trigger(event, payload):
 async def review(repo, number, manual):
     try:
         async with slots, asyncio.timeout(REVIEW_TIMEOUT):
-            await run_review(repo, number)
+            text = await run_review(repo, number)
+        log.info("review of %s#%s:\n%s", repo, number, text)
     except Exception:
         log.exception("review of %s#%s failed", repo, number)
 
@@ -93,6 +111,13 @@ async def run_review(repo, number):
                              headers={"Accept": "application/vnd.github.diff"})).raise_for_status().text
     sha = pr["head"]["sha"]
     reviewed.add(f"{repo}@{sha}")
+    log.info("reviewing %s#%s at %s", repo, number, sha)
+    if len(diff) > MAX_DIFF_CHARS:
+        diff = diff[:MAX_DIFF_CHARS] + f"\n[diff truncated after {MAX_DIFF_CHARS} characters]"
+    with open(REVIEW_PROMPT_FILE) as f:  # read per review, so prompt edits apply without a restart
+        prompt = f.read().replace("{language}", REVIEW_LANGUAGE)
+    pr_text = (f"<pr_title>\n{pr['title']}\n</pr_title>\n<pr_description>\n{pr['body'] or ''}\n"
+               f"</pr_description>\n<diff>\n{diff}\n</diff>\n")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         src, home = f"{tmp}/src", f"{tmp}/home"  # fresh HOME per review: no state shared between reviews
         os.mkdir(home)
@@ -104,18 +129,32 @@ async def run_review(repo, number):
                          "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {GIT_AUTH}"})
         # Symlinks become plain files, so the PR can't point anything at files outside the checkout.
         await run(["git", "-C", src, "-c", "core.symlinks=false", "checkout", "-q", "FETCH_HEAD"], env)
-        log.info("checked out %s@%s (%d character diff)", repo, sha, len(diff))
+        text = await run(claude_command(prompt), env | {CLAUDE_AUTH_VAR: CLAUDE_AUTH}, cwd=src, stdin=pr_text)
+    if not text.strip():
+        raise RuntimeError("claude returned an empty review")
+    return text
 
 
-async def run(cmd, env):
-    proc = await asyncio.create_subprocess_exec(*cmd, env=env, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE)
+def claude_command(prompt):
+    # The checkout is untrusted: --restricted ignores its settings, hooks and CLAUDE.md and keeps the file
+    # tools inside it; --strict-mcp-config ignores its .mcp.json.
+    cmd = ["claude", "-p", prompt, "--allowedTools", CLAUDE_ALLOWED_TOOLS, "--disallowedTools",
+           CLAUDE_DISALLOWED_TOOLS, "--max-turns", CLAUDE_MAX_TURNS, "--restricted", "--strict-mcp-config"]
+    if CLAUDE_MODEL:
+        cmd += ["--model", CLAUDE_MODEL]
+    return cmd + shlex.split(CLAUDE_EXTRA_ARGS)
+
+
+async def run(cmd, env, cwd=None, stdin=""):
+    proc = await asyncio.create_subprocess_exec(*cmd, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE,
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
-        out, err = await proc.communicate()
+        out, err = await proc.communicate(stdin.encode())
     finally:
         if proc.returncode is None:  # cancelled by the review timeout
             proc.kill()
             await proc.wait()
     if proc.returncode:
+        # claude prints its errors (e.g. "Reached max turns") on stdout, git on stderr
         raise RuntimeError(f"{cmd[0]} exited with {proc.returncode}: {(err + out).decode(errors='replace')[-500:]}")
     return out.decode(errors="replace")

@@ -10,7 +10,8 @@ import time
 import unittest
 from unittest import mock
 
-os.environ.update(GITHUB_WEBHOOK_SECRET="test-secret", GH_TOKEN="fake-gh-token")
+os.environ.update(GITHUB_WEBHOOK_SECRET="test-secret", GH_TOKEN="fake-gh-token", ANTHROPIC_API_KEY="fake-api-key",
+                  REVIEW_PROMPT_FILE=os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_prompt.md"))
 
 import httpx
 from fastapi.testclient import TestClient
@@ -98,6 +99,7 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
     """GitHub and subprocesses are faked; checks what reaches git and the agent."""
 
     diff = "diff --git a/x.py b/x.py\n+print('hi')\n"
+    review = "Looks good."
 
     def setUp(self):
         app.reviewed.clear()
@@ -108,9 +110,9 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, text=self.diff)
             return httpx.Response(200, json={"title": "Add x", "body": None, "head": {"sha": "abc123"}})
 
-        async def fake_run(cmd, env):
-            self.calls.append((cmd, env))
-            return ""
+        async def fake_run(cmd, env, cwd=None, stdin=""):
+            self.calls.append((cmd, env, stdin))
+            return self.review if cmd[0] == "claude" else ""
 
         transport = httpx.MockTransport(github_api)
         for name, fake in (("github", lambda: httpx.AsyncClient(base_url="https://api.github.com", transport=transport)),
@@ -121,9 +123,9 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_checkout_sends_the_token_only_as_a_fetch_header(self):
         await app.run_review("acme/widgets", 7)
-        init, fetch, checkout = self.calls
+        init, fetch, checkout, _ = self.calls
         self.assertEqual(base64.b64decode(app.GIT_AUTH), b"x-access-token:fake-gh-token")
-        for cmd, env in self.calls:
+        for cmd, env, _ in self.calls:
             self.assertNotIn("fake-gh-token", " ".join(cmd))
             self.assertNotIn(app.GIT_AUTH, " ".join(cmd))
         self.assertEqual(fetch[0][-2:], ["https://github.com/acme/widgets.git", "abc123"])
@@ -132,9 +134,48 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("core.symlinks=false", checkout[0])
         self.assertIn("acme/widgets@abc123", app.reviewed)
 
+    async def test_agent_gets_prompt_and_pr_but_no_github_token(self):
+        self.assertEqual(await app.run_review("acme/widgets", 7), "Looks good.")
+        cmd, env, stdin = self.calls[-1]
+        self.assertEqual(cmd[:2], ["claude", "-p"])
+        self.assertIn("Write in German", cmd[2])
+        self.assertIn("--restricted", cmd)
+        self.assertIn("--strict-mcp-config", cmd)
+        self.assertEqual(set(env), {"PATH", "HOME", "ANTHROPIC_API_KEY"})
+        self.assertNotIn("fake-gh-token", json.dumps([cmd, env, stdin]))
+        self.assertNotIn(app.GIT_AUTH, json.dumps([cmd, env, stdin]))
+        self.assertIn("<pr_title>\nAdd x\n</pr_title>", stdin)
+        self.assertIn(self.diff, stdin)
+
+    async def test_long_diff_is_truncated(self):
+        with mock.patch.object(app, "MAX_DIFF_CHARS", 10):
+            await app.run_review("acme/widgets", 7)
+        stdin = self.calls[-1][2]
+        self.assertIn(self.diff[:10] + "\n[diff truncated after 10 characters]", stdin)
+        self.assertNotIn(self.diff, stdin)
+
+    async def test_empty_review_is_an_error(self):
+        self.review = "\n"
+        with self.assertRaisesRegex(RuntimeError, "empty review"):
+            await app.run_review("acme/widgets", 7)
+
+
+class CommandTest(unittest.TestCase):
+    def test_default_command(self):
+        self.assertEqual(app.claude_command("P"), [
+            "claude", "-p", "P", "--allowedTools", "Read,Grep,Glob", "--disallowedTools",
+            "Bash,Edit,Write,WebFetch,WebSearch", "--max-turns", "20", "--restricted", "--strict-mcp-config"])
+
+    def test_model_and_extra_args_are_appended(self):
+        with mock.patch.multiple(app, CLAUDE_MODEL="opus", CLAUDE_EXTRA_ARGS="--append-system-prompt 'Be brief.'"):
+            self.assertEqual(app.claude_command("P")[-4:], ["--model", "opus", "--append-system-prompt", "Be brief."])
+
 
 class RunTest(unittest.IsolatedAsyncioTestCase):
     env = {"PATH": os.environ["PATH"]}
+
+    async def test_stdin_is_passed_and_stdout_returned(self):
+        self.assertEqual(await app.run(["cat"], self.env, stdin="PR text"), "PR text")
 
     async def test_failure_reports_exit_code_and_output(self):
         with self.assertRaisesRegex(RuntimeError, "sh exited with 3: err\nout"):

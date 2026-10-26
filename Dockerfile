@@ -13,7 +13,7 @@ RUN --mount=from=ghcr.io/astral-sh/uv:0.13.5,source=/uv,target=/bin/uv \
     && uv pip install --python /opt/venv/bin/python -r /app/requirements.txt
 
 WORKDIR /app
-COPY app.py ./
+COPY app.py review_prompt.md ./
 USER node
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
