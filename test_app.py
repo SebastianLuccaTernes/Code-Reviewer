@@ -141,7 +141,7 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await app.run_review("acme/widgets", 7), "Looks good.")
         cmd, env, stdin = self.calls[-1]
         self.assertEqual(cmd[:2], ["claude", "-p"])
-        self.assertIn("Write in German", cmd[2])
+        self.assertIn("Write in German", cmd[-1])
         self.assertIn("--restricted", cmd)
         self.assertIn("--strict-mcp-config", cmd)
         self.assertEqual(set(env), {"PATH", "HOME", "ANTHROPIC_API_KEY"})
@@ -191,12 +191,13 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
 class CommandTest(unittest.TestCase):
     def test_default_command(self):
         self.assertEqual(app.claude_command("P"), [
-            "claude", "-p", "P", "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--disallowedTools",
-            "Bash,Edit,Write,WebFetch,WebSearch", "--max-turns", "20", "--restricted", "--strict-mcp-config"])
+            "claude", "-p", "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--disallowedTools",
+            "Bash,Edit,Write,WebFetch,WebSearch", "--max-turns", "20", "--restricted", "--strict-mcp-config", "--", "P"])
 
-    def test_model_and_extra_args_are_appended(self):
+    def test_model_and_extra_args_go_before_the_prompt(self):
         with mock.patch.multiple(app, CLAUDE_MODEL="opus", CLAUDE_EXTRA_ARGS="--append-system-prompt 'Be brief.'"):
-            self.assertEqual(app.claude_command("P")[-4:], ["--model", "opus", "--append-system-prompt", "Be brief."])
+            self.assertEqual(app.claude_command("- P")[-6:],
+                             ["--model", "opus", "--append-system-prompt", "Be brief.", "--", "- P"])
 
 
 class RunTest(unittest.IsolatedAsyncioTestCase):

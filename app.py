@@ -144,12 +144,13 @@ def claude_command(prompt):
     # --allowedTools only pre-approves tools; --tools removes all others (Agent, Skill, ...).
     # The checkout is untrusted: --restricted ignores its settings, hooks and CLAUDE.md and keeps the file
     # tools inside it; --strict-mcp-config ignores its .mcp.json.
-    cmd = ["claude", "-p", prompt, "--tools", CLAUDE_ALLOWED_TOOLS, "--allowedTools", CLAUDE_ALLOWED_TOOLS,
+    cmd = ["claude", "-p", "--tools", CLAUDE_ALLOWED_TOOLS, "--allowedTools", CLAUDE_ALLOWED_TOOLS,
            "--disallowedTools", CLAUDE_DISALLOWED_TOOLS, "--max-turns", CLAUDE_MAX_TURNS, "--restricted",
            "--strict-mcp-config"]
     if CLAUDE_MODEL:
         cmd += ["--model", CLAUDE_MODEL]
-    return cmd + shlex.split(CLAUDE_EXTRA_ARGS)
+    # The prompt goes last, after "--", so a prompt starting with "-" (front matter, a list) isn't read as an option.
+    return cmd + shlex.split(CLAUDE_EXTRA_ARGS) + ["--", prompt]
 
 
 async def run(cmd, env, cwd=None, stdin=""):

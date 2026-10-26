@@ -75,7 +75,7 @@ All settings come from `.env` (see `.env.example`).
 The service runs:
 
 ```
-claude -p "<prompt>" --tools … --allowedTools … --disallowedTools … --max-turns N --restricted --strict-mcp-config [--model M] [extra args]
+claude -p --tools … --allowedTools … --disallowedTools … --max-turns N --restricted --strict-mcp-config [--model M] [extra args] -- "<prompt>"
 ```
 
 with the PR title, description and diff on stdin.
