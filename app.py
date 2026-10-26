@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import ctypes
 import hashlib
 import hmac
@@ -10,6 +11,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import sys
 import tempfile
 
@@ -155,12 +157,15 @@ def claude_command(prompt):
 
 async def run(cmd, env, cwd=None, stdin=""):
     proc = await asyncio.create_subprocess_exec(*cmd, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE,
-                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                start_new_session=True)
     try:
         out, err = await proc.communicate(stdin.encode())
     finally:
         if proc.returncode is None:  # cancelled by the review timeout
-            proc.kill()
+            # Kill the whole group: children like git-remote-https hold the pipes, and wait() waits for those too.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
             await proc.wait()
     if proc.returncode:
         # claude prints its errors (e.g. "Reached max turns") on stdout, git on stderr

@@ -210,9 +210,16 @@ class RunTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "sh exited with 3: err\nout"):
             await app.run(["sh", "-c", "echo out; echo err >&2; exit 3"], self.env)
 
-    async def test_timeout_kills_the_process(self):
+    async def test_timeout_kills_the_whole_process_group(self):
+        procs, spawn = [], asyncio.create_subprocess_exec
+
+        async def spy(*args, **kwargs):
+            procs.append(await spawn(*args, **kwargs))
+            return procs[-1]
+
         start = time.monotonic()
-        with self.assertRaises(TimeoutError):
+        with mock.patch("asyncio.create_subprocess_exec", spy), self.assertRaises(TimeoutError):
             async with asyncio.timeout(0.2):
-                await app.run(["sleep", "30"], self.env)
+                await app.run(["sh", "-c", "sleep 30 & sleep 30"], self.env)  # the background sleep holds the pipes
         self.assertLess(time.monotonic() - start, 5)
+        self.assertIsNotNone(procs[0].returncode)
