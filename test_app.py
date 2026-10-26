@@ -1,5 +1,6 @@
 """Run with: python -m unittest. Uses fake values only."""
 
+import base64
 import hashlib
 import hmac
 import json
@@ -7,8 +8,9 @@ import os
 import unittest
 from unittest import mock
 
-os.environ.update(GITHUB_WEBHOOK_SECRET="test-secret")
+os.environ.update(GITHUB_WEBHOOK_SECRET="test-secret", GH_TOKEN="fake-gh-token")
 
+import httpx
 from fastapi.testclient import TestClient
 
 import app
@@ -88,3 +90,50 @@ class TriggerTest(unittest.TestCase):
         with mock.patch.object(app, "ALLOWED_REPOS", {"acme/widgets"}):
             self.assertIsNotNone(app.trigger("pull_request", pr_event(repo="Acme/Widgets")))
             self.assertIsNone(app.trigger("pull_request", pr_event(repo="acme/other")))
+
+
+class ReviewTest(unittest.IsolatedAsyncioTestCase):
+    """GitHub and subprocesses are faked; checks what reaches git and the agent."""
+
+    diff = "diff --git a/x.py b/x.py\n+print('hi')\n"
+
+    def setUp(self):
+        app.reviewed.clear()
+        self.calls = []
+
+        def github_api(request):
+            if request.headers["accept"] == "application/vnd.github.diff":
+                return httpx.Response(200, text=self.diff)
+            return httpx.Response(200, json={"title": "Add x", "body": None, "head": {"sha": "abc123"}})
+
+        async def fake_run(cmd, env):
+            self.calls.append((cmd, env))
+            return ""
+
+        transport = httpx.MockTransport(github_api)
+        for name, fake in (("github", lambda: httpx.AsyncClient(base_url="https://api.github.com", transport=transport)),
+                           ("run", fake_run)):
+            patcher = mock.patch.object(app, name, fake)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def test_checkout_sends_the_token_only_as_a_fetch_header(self):
+        await app.run_review("acme/widgets", 7)
+        init, fetch, checkout = self.calls
+        self.assertEqual(base64.b64decode(app.GIT_AUTH), b"x-access-token:fake-gh-token")
+        for cmd, env in self.calls:
+            self.assertNotIn("fake-gh-token", " ".join(cmd))
+            self.assertNotIn(app.GIT_AUTH, " ".join(cmd))
+        self.assertEqual(fetch[0][-2:], ["https://github.com/acme/widgets.git", "abc123"])
+        self.assertEqual(fetch[1]["GIT_CONFIG_VALUE_0"], f"AUTHORIZATION: basic {app.GIT_AUTH}")
+        self.assertNotIn("GIT_CONFIG_VALUE_0", checkout[1])
+        self.assertIn("core.symlinks=false", checkout[0])
+        self.assertIn("acme/widgets@abc123", app.reviewed)
+
+
+class RunTest(unittest.IsolatedAsyncioTestCase):
+    env = {"PATH": os.environ["PATH"]}
+
+    async def test_failure_reports_exit_code_and_output(self):
+        with self.assertRaisesRegex(RuntimeError, "sh exited with 3: err\nout"):
+            await app.run(["sh", "-c", "echo out; echo err >&2; exit 3"], self.env)
