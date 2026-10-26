@@ -105,6 +105,7 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
 
     diff = "diff --git a/x.py b/x.py\n+print('hi')\n"
     review = "Looks good."
+    post_status = 201
 
     def setUp(self):
         app.reviewed.clear()
@@ -113,7 +114,7 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         def github_api(request):
             if request.method == "POST":
                 self.posted.append((request.url.path, json.loads(request.content)["body"]))
-                return httpx.Response(201, json={})
+                return httpx.Response(self.post_status, json={})
             if request.headers["accept"] == "application/vnd.github.diff":
                 return httpx.Response(200, text=self.diff)
             return httpx.Response(200, json={"title": "Add x", "body": None, "head": {"sha": "abc123"}})
@@ -177,6 +178,13 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.posted, [])
         await app.review("acme/widgets", 7, manual=True)
         self.assertEqual(self.posted[0][1], f"{app.MARKER}\nReview failed: claude returned an empty review")
+
+    async def test_failed_failure_report_is_only_logged(self):
+        self.review, self.post_status = "", 401
+        with self.assertLogs("reviewer", "ERROR") as logs:
+            await app.review("acme/widgets", 7, manual=True)
+        self.assertEqual(len(self.posted), 1)
+        self.assertIn("could not report the failure", logs.output[-1])
 
     async def test_timeout_is_reported_on_manual_review(self):
         async def slow_run(*args, **kwargs):

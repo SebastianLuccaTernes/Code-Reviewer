@@ -108,7 +108,10 @@ async def review(repo, number, manual):
     except Exception as e:
         log.exception("review of %s#%s failed", repo, number)
         if manual:  # someone asked for this review, so tell them; automatic reviews fail quietly
-            await post_comment(repo, number, f"Review failed: {str(e) or type(e).__name__}")
+            try:
+                await post_comment(repo, number, f"Review failed: {str(e) or type(e).__name__}")
+            except Exception:  # e.g. GitHub is down too; an escaping error would drop the server's connection
+                log.exception("could not report the failure on %s#%s", repo, number)
 
 
 def github():
