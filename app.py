@@ -41,6 +41,7 @@ REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "900"))
 
 MARKER = "<!-- claude-review-bot -->"
 MAX_COMMENT_CHARS = 60000
+MAX_PAYLOAD_BYTES = 25 * 2**20  # GitHub never sends larger webhook payloads
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 GIT_AUTH = base64.b64encode(f"x-access-token:{GH_TOKEN}".encode()).decode()
 
@@ -60,7 +61,11 @@ def health():
 
 @app.post("/webhook")
 async def webhook(request: Request, tasks: BackgroundTasks):
-    body = await request.body()
+    body = bytearray()
+    async for chunk in request.stream():  # capped: anyone can send a body before the signature is checked
+        body += chunk
+        if len(body) > MAX_PAYLOAD_BYTES:
+            raise HTTPException(413, "payload too large")
     signature = "sha256=" + hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature.encode(), request.headers.get("x-hub-signature-256", "").encode()):
         raise HTTPException(401, "invalid signature")

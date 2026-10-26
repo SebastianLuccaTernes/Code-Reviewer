@@ -55,6 +55,11 @@ class WebhookTest(unittest.TestCase):
         self.assertEqual(self.post(body, "sha256=\xe4".encode("latin-1")).status_code, 401)
         self.assertEqual(self.client.post("/webhook", content=body).status_code, 401)
 
+    def test_oversized_payload_is_413_even_when_signed(self):
+        body = b'{"zen": "Keep it simple."}'
+        with mock.patch.object(app, "MAX_PAYLOAD_BYTES", len(body) - 1):
+            self.assertEqual(self.post(body, sign(body)).status_code, 413)
+
     def test_form_encoded_payload_is_400(self):
         body = b"payload=%7B%7D"
         self.assertEqual(self.post(body, sign(body)).status_code, 400)
