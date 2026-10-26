@@ -80,7 +80,7 @@ claude -p --tools … --allowedTools … --disallowedTools … --max-turns N --r
 
 with the PR title, description and diff on stdin.
 
-`review_prompt.md` is mounted into the container, so edits apply to the next review without a rebuild. Edit it in place: if your editor saves by replacing the file, the mount keeps the old version until `docker compose restart`.
+The review instructions are in `prompt/review_prompt.md`. The `prompt` folder is mounted into the container, so edits apply to the next review without a rebuild or restart.
 
 **Repo-specific rules** belong in the reviewed repo: the agent reads its `REVIEW.md` or `CLAUDE.md`.
 

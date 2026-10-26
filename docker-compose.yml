@@ -5,6 +5,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./review_prompt.md:/app/review_prompt.md:ro
+      # The folder, not the file: a file mount keeps the old file when an editor or git replaces it.
+      - ./prompt:/app/prompt:ro
     restart: unless-stopped
     # No "init: true": the app must stay PID 1 so its environment (GH_TOKEN) stays hidden from the agent.

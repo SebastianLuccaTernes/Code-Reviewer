@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 os.environ.update(GITHUB_WEBHOOK_SECRET="test-secret", GH_TOKEN="fake-gh-token", ANTHROPIC_API_KEY="fake-api-key",
-                  REVIEW_PROMPT_FILE=os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_prompt.md"))
+                  REVIEW_PROMPT_FILE=os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt/review_prompt.md"))
 
 import httpx
 from fastapi.testclient import TestClient
