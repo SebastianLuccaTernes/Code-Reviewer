@@ -103,9 +103,12 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         app.reviewed.clear()
-        self.calls = []
+        self.calls, self.posted = [], []
 
         def github_api(request):
+            if request.method == "POST":
+                self.posted.append((request.url.path, json.loads(request.content)["body"]))
+                return httpx.Response(201, json={})
             if request.headers["accept"] == "application/vnd.github.diff":
                 return httpx.Response(200, text=self.diff)
             return httpx.Response(200, json={"title": "Add x", "body": None, "head": {"sha": "abc123"}})
@@ -158,6 +161,16 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         self.review = "\n"
         with self.assertRaisesRegex(RuntimeError, "empty review"):
             await app.run_review("acme/widgets", 7)
+
+    async def test_review_is_posted_as_marked_comment(self):
+        await app.review("acme/widgets", 7, manual=False)
+        self.assertEqual(self.posted, [("/repos/acme/widgets/issues/7/comments", f"{app.MARKER}\nLooks good.")])
+
+    async def test_comment_is_redacted_and_truncated(self):
+        await app.post_comment("acme/widgets", 7, "fake-gh-token fake-api-key " + app.GIT_AUTH + "x" * 70000)
+        body = self.posted[0][1]
+        self.assertTrue(body.startswith(f"{app.MARKER}\n[redacted] [redacted] [redacted]x"))
+        self.assertEqual(len(body), app.MAX_COMMENT_CHARS)
 
 
 class CommandTest(unittest.TestCase):

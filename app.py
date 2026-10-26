@@ -37,6 +37,8 @@ CLAUDE_EXTRA_ARGS = os.getenv("CLAUDE_EXTRA_ARGS", "")
 MAX_DIFF_CHARS = int(os.getenv("MAX_DIFF_CHARS", "150000"))
 REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "900"))
 
+MARKER = "<!-- claude-review-bot -->"
+MAX_COMMENT_CHARS = 60000
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 GIT_AUTH = base64.b64encode(f"x-access-token:{GH_TOKEN}".encode()).decode()
 
@@ -94,7 +96,8 @@ async def review(repo, number, manual):
     try:
         async with slots, asyncio.timeout(REVIEW_TIMEOUT):
             text = await run_review(repo, number)
-        log.info("review of %s#%s:\n%s", repo, number, text)
+        await post_comment(repo, number, text)
+        log.info("posted review on %s#%s", repo, number)
     except Exception:
         log.exception("review of %s#%s failed", repo, number)
 
@@ -158,3 +161,12 @@ async def run(cmd, env, cwd=None, stdin=""):
         # claude prints its errors (e.g. "Reached max turns") on stdout, git on stderr
         raise RuntimeError(f"{cmd[0]} exited with {proc.returncode}: {(err + out).decode(errors='replace')[-500:]}")
     return out.decode(errors="replace")
+
+
+async def post_comment(repo, number, text):
+    body = f"{MARKER}\n{text}"
+    for secret in (WEBHOOK_SECRET, GH_TOKEN, GIT_AUTH, CLAUDE_AUTH):
+        body = body.replace(secret, "[redacted]")  # last line of defense if the agent was talked into leaking one
+    async with github() as gh:
+        r = await gh.post(f"/repos/{repo}/issues/{number}/comments", json={"body": body[:MAX_COMMENT_CHARS]})
+        r.raise_for_status()
