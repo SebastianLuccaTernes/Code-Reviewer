@@ -166,6 +166,21 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         await app.review("acme/widgets", 7, manual=False)
         self.assertEqual(self.posted, [("/repos/acme/widgets/issues/7/comments", f"{app.MARKER}\nLooks good.")])
 
+    async def test_failed_review_is_reported_only_when_requested_manually(self):
+        self.review = ""
+        await app.review("acme/widgets", 7, manual=False)
+        self.assertEqual(self.posted, [])
+        await app.review("acme/widgets", 7, manual=True)
+        self.assertEqual(self.posted[0][1], f"{app.MARKER}\nReview failed: claude returned an empty review")
+
+    async def test_timeout_is_reported_on_manual_review(self):
+        async def slow_run(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        with mock.patch.multiple(app, run=slow_run, REVIEW_TIMEOUT=0.05):
+            await app.review("acme/widgets", 7, manual=True)
+        self.assertEqual(self.posted[0][1], f"{app.MARKER}\nReview failed: TimeoutError")
+
     async def test_comment_is_redacted_and_truncated(self):
         await app.post_comment("acme/widgets", 7, "fake-gh-token fake-api-key " + app.GIT_AUTH + "x" * 70000)
         body = self.posted[0][1]

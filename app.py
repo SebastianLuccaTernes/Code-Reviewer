@@ -98,8 +98,10 @@ async def review(repo, number, manual):
             text = await run_review(repo, number)
         await post_comment(repo, number, text)
         log.info("posted review on %s#%s", repo, number)
-    except Exception:
+    except Exception as e:
         log.exception("review of %s#%s failed", repo, number)
+        if manual:  # someone asked for this review, so tell them; automatic reviews fail quietly
+            await post_comment(repo, number, f"Review failed: {str(e) or type(e).__name__}")
 
 
 def github():
