@@ -63,7 +63,7 @@ All settings come from `.env` (see `.env.example`).
 | `ALLOWED_REPOS` | empty: all repos | Comma-separated `owner/repo` list |
 | `REVIEW_PROMPT_FILE` | `/app/review_prompt.md` | Review instructions; `{language}` is replaced |
 | `REVIEW_LANGUAGE` | `German` | Language of the review |
-| `CLAUDE_ALLOWED_TOOLS` | `Read,Grep,Glob` | |
+| `CLAUDE_ALLOWED_TOOLS` | `Read,Grep,Glob` | The only tools the agent gets |
 | `CLAUDE_DISALLOWED_TOOLS` | `Bash,Edit,Write,WebFetch,WebSearch` | |
 | `CLAUDE_MODEL` | CLI default | |
 | `CLAUDE_MAX_TURNS` | `20` | |
@@ -75,7 +75,7 @@ All settings come from `.env` (see `.env.example`).
 The service runs:
 
 ```
-claude -p "<prompt>" --allowedTools … --disallowedTools … --max-turns N --restricted --strict-mcp-config [--model M] [extra args]
+claude -p "<prompt>" --tools … --allowedTools … --disallowedTools … --max-turns N --restricted --strict-mcp-config [--model M] [extra args]
 ```
 
 with the PR title, description and diff on stdin.

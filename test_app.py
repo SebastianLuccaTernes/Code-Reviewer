@@ -191,7 +191,7 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
 class CommandTest(unittest.TestCase):
     def test_default_command(self):
         self.assertEqual(app.claude_command("P"), [
-            "claude", "-p", "P", "--allowedTools", "Read,Grep,Glob", "--disallowedTools",
+            "claude", "-p", "P", "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--disallowedTools",
             "Bash,Edit,Write,WebFetch,WebSearch", "--max-turns", "20", "--restricted", "--strict-mcp-config"])
 
     def test_model_and_extra_args_are_appended(self):
