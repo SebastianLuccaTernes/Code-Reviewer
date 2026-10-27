@@ -41,7 +41,7 @@ REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "900"))
 
 MARKER = "<!-- claude-review-bot -->"
 MAX_COMMENT_CHARS = 60000
-MAX_PAYLOAD_BYTES = 25 * 2**20  # GitHub never sends larger webhook payloads
+MAX_PAYLOAD_BYTES = 2 * 2**20  # pull_request/issue_comment payloads stay under 1 MB (texts max 65536 chars)
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 GIT_AUTH = base64.b64encode(f"x-access-token:{GH_TOKEN}".encode()).decode()
 
