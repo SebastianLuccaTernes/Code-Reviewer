@@ -34,11 +34,12 @@ REVIEW_LANGUAGE = os.getenv("REVIEW_LANGUAGE", "German")
 CLAUDE_ALLOWED_TOOLS = os.getenv("CLAUDE_ALLOWED_TOOLS", "Read,Grep,Glob")
 CLAUDE_DISALLOWED_TOOLS = os.getenv("CLAUDE_DISALLOWED_TOOLS", "Bash,Edit,Write,WebFetch,WebSearch")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "")
-CLAUDE_MAX_TURNS = os.getenv("CLAUDE_MAX_TURNS", "20")
+CLAUDE_MAX_TURNS = os.getenv("CLAUDE_MAX_TURNS", "40")
 CLAUDE_EXTRA_ARGS = os.getenv("CLAUDE_EXTRA_ARGS", "")
 MAX_DIFF_CHARS = int(os.getenv("MAX_DIFF_CHARS", "150000"))
-REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "900"))
+REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "1800"))
 
+RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt/rules.md")  # the mounted folder
 MARKER = "<!-- claude-review-bot -->"
 MAX_COMMENT_CHARS = 60000
 MAX_PAYLOAD_BYTES = 2 * 2**20  # pull_request/issue_comment payloads stay under 1 MB (texts max 65536 chars)
@@ -129,8 +130,9 @@ async def run_review(repo, number):
     log.info("reviewing %s#%s at %s", repo, number, sha)
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + f"\n[diff truncated after {MAX_DIFF_CHARS} characters]"
-    with open(REVIEW_PROMPT_FILE) as f:  # read per review, so prompt edits apply without a restart
-        prompt = f.read().replace("{language}", REVIEW_LANGUAGE)
+    # Read per review, so prompt edits apply without a restart. The rules come first, whatever prompt is set.
+    with open(RULES_FILE) as rules, open(REVIEW_PROMPT_FILE) as f:
+        prompt = f"{rules.read()}\n{f.read()}".replace("{language}", REVIEW_LANGUAGE)
     pr_text = (f"<pr_title>\n{pr['title']}\n</pr_title>\n<pr_description>\n{pr['body'] or ''}\n"
                f"</pr_description>\n<diff>\n{diff}\n</diff>\n")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:

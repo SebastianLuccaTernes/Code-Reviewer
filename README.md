@@ -61,16 +61,16 @@ All settings come from `.env` (see `.env.example`).
 | `GH_TOKEN` | required | GitHub token |
 | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | one required | Claude auth |
 | `ALLOWED_REPOS` | empty: all repos | Comma-separated `owner/repo` list |
-| `REVIEW_PROMPT_FILE` | `/app/review_prompt.md` | Review instructions; `{language}` is replaced |
+| `REVIEW_PROMPT_FILE` | `/app/review_prompt.md` | Review instructions; `{language}` is replaced. `/app/prompt/ponytail_review.md` for the ponytail review |
 | `REVIEW_LANGUAGE` | `German` | Language of the review |
 | `CLAUDE_ALLOWED_TOOLS` | `Read,Grep,Glob` | The only tools the agent gets |
 | `CLAUDE_DISALLOWED_TOOLS` | `Bash,Edit,Write,WebFetch,WebSearch` | |
 | `CLAUDE_MODEL` | CLI default | |
-| `CLAUDE_MAX_TURNS` | `20` | |
+| `CLAUDE_MAX_TURNS` | `40` | |
 | `CLAUDE_EXTRA_ARGS` | empty | Appended to the command, shell-style quoting |
 | `MAX_CONCURRENT_REVIEWS` | `2` | |
 | `MAX_DIFF_CHARS` | `150000` | Longer diffs are truncated |
-| `REVIEW_TIMEOUT` | `900` | Seconds per review |
+| `REVIEW_TIMEOUT` | `1800` | Seconds per review |
 
 The service runs:
 
@@ -80,7 +80,9 @@ claude -p --tools … --allowedTools … --disallowedTools … --max-turns N --r
 
 with the PR title, description and diff on stdin.
 
-The review instructions are in `prompt/review_prompt.md`. The `prompt` folder is mounted into the container, so edits apply to the next review without a rebuild or restart.
+The review instructions are in `prompt/review_prompt.md`. The rules in `prompt/rules.md` (untrusted PR content, no secrets in the comment) always come first, whatever prompt file is set. The `prompt` folder is mounted into the container, so edits apply to the next review without a rebuild or restart.
+
+`prompt/ponytail_review.md` is an alternative: the [ponytail](https://github.com/DietrichGebert/ponytail) review (MIT, see `prompt/LICENSE-ponytail`) adapted to this service. It explains each finding in plain language, groups findings into must fix, should fix and nice to have, and also flags code that could be deleted or reused. Set `REVIEW_PROMPT_FILE=/app/prompt/ponytail_review.md` in `.env` and run `docker compose up -d` to use it.
 
 **Repo-specific rules** belong in the reviewed repo: the agent reads its `REVIEW.md` or `CLAUDE.md`.
 
