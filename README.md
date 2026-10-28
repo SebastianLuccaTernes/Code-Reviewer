@@ -9,6 +9,42 @@ A review starts when:
 
 The service verifies the webhook signature, answers right away, then in the background fetches the PR and its diff, checks out the head commit into a temporary directory, runs `claude -p` there with read-only tools, posts the result as a comment and deletes the directory.
 
+## Setup with an agent
+
+An agent with shell access on the server, for example Claude Code, can do the whole [Setup](#setup) on its own. You only provide what it can't create itself:
+
+- `GH_TOKEN` and the Claude credential, as described in [Tokens](#1-tokens).
+- `WEBHOOK_TOKEN`: a second fine-grained token for the same repos with **Webhooks: Read and write** (classic token: `admin:repo_hook`). The agent uses it once to add the webhooks and doesn't store it.
+- `DOMAIN` (optional): a domain whose DNS record points to the server. Without one, the agent sets up a Cloudflare quick tunnel. Its URL changes whenever the tunnel restarts, so it's only good for testing.
+
+Fill in the values at the top of the prompt and give it to the agent. Start Claude Code with `claude --dangerously-skip-permissions` so it doesn't ask before every command. Only do that on a server you own. The values you paste stay in the agent's session history on the server.
+
+```text
+Set up the self-hosted PR reviewer from https://github.com/SebastianLuccaTernes/Code-Reviewer on this server. Don't ask me anything: fix problems yourself and stop only if a step can't be done. Never print secret values.
+
+REPOS=owner/repo,owner/other-repo
+GH_TOKEN=
+WEBHOOK_TOKEN=
+CLAUDE_CODE_OAUTH_TOKEN=
+ANTHROPIC_API_KEY=
+DOMAIN=
+
+Exactly one of the two Claude values is filled in. WEBHOOK_TOKEN is only for steps 6 and 7; never write it to disk. DOMAIN may be empty.
+
+1. Install what's missing: git, curl, openssl, and Docker with the compose plugin (https://get.docker.com). Use sudo if you aren't root.
+2. Clone the repo to /opt/code-reviewer, or git pull it if it's already there, and work in that directory.
+3. Create .env from .env.example. Set GH_TOKEN, the Claude value I filled in, ALLOWED_REPOS=$REPOS and GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 32). If .env already exists, keep its GITHUB_WEBHOOK_SECRET. Then run chmod 600 .env.
+4. Run docker compose up -d --build and wait until curl -fsS http://localhost:8000/health returns {"ok":true}. If it doesn't, read docker compose logs.
+5. Make the service reachable over HTTPS and set HOST:
+   - DOMAIN is set: install Caddy from its official package repo. Give it a Caddyfile site block for $DOMAIN with reverse_proxy 127.0.0.1:8000 and reload it. If a local firewall is active, allow ports 80 and 443. HOST=$DOMAIN.
+   - DOMAIN is empty: install cloudflared and run cloudflared tunnel --url http://localhost:8000 as a systemd service that starts on boot. HOST is the https://<name>.trycloudflare.com host from its log.
+   Wait until curl -fsS https://$HOST/health returns {"ok":true}.
+6. For each repo in REPOS, call the GitHub REST API with WEBHOOK_TOKEN. Create a webhook, or update an existing one that points to this service (the same URL, or an older trycloudflare.com URL):
+   {"name":"web","active":true,"events":["pull_request","issue_comment"],"config":{"url":"https://$HOST/webhook","content_type":"json","secret":"<GITHUB_WEBHOOK_SECRET from .env>","insecure_ssl":"0"}}
+7. Verify each webhook: call POST /repos/{repo}/hooks/{id}/pings, then GET /repos/{repo}/hooks/{id}/deliveries. The ping delivery must have status_code 200. A 401 means the secret in the webhook doesn't match .env: fix it and ping again.
+8. Report HOST, the webhook id for each repo, whether the URL is temporary, and anything I still have to do myself, such as opening ports 80 and 443 in the cloud provider's firewall.
+```
+
 ## Setup
 
 ### 1. Tokens
