@@ -4,7 +4,7 @@ When a pull request is opened on GitHub, Claude reviews it and posts the result 
 
 A review starts when:
 
-- a non-draft PR is opened or marked ready for review (each commit is reviewed automatically at most once), or
+- a non-draft PR is opened or marked ready for review (each commit is reviewed automatically at most once; Dependabot PRs are skipped), or
 - an OWNER, MEMBER or COLLABORATOR comments `@claude review` on a PR.
 
 The service verifies the webhook signature, answers right away, then in the background fetches the PR and its diff, checks out the head commit into a temporary directory, runs `claude -p` there with read-only tools, posts the result as a comment and deletes the directory.

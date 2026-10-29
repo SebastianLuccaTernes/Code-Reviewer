@@ -23,9 +23,9 @@ def sign(body, secret="test-secret"):
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
-def pr_event(action="opened", draft=False, sha="abc123", repo="acme/widgets"):
+def pr_event(action="opened", draft=False, sha="abc123", repo="acme/widgets", author="octocat"):
     return {"action": action, "repository": {"full_name": repo},
-            "pull_request": {"number": 7, "draft": draft, "head": {"sha": sha}}}
+            "pull_request": {"number": 7, "draft": draft, "head": {"sha": sha}, "user": {"login": author}}}
 
 
 def comment_event(body="@claude review", association="MEMBER", user_type="User", on_pr=True):
@@ -83,6 +83,7 @@ class TriggerTest(unittest.TestCase):
 
     def test_drafts_and_other_events_are_skipped(self):
         self.assertIsNone(app.trigger("pull_request", pr_event(draft=True)))
+        self.assertIsNone(app.trigger("pull_request", pr_event(author="dependabot[bot]")))
         self.assertIsNone(app.trigger("pull_request", pr_event("synchronize")))
         self.assertIsNone(app.trigger("ping", {"zen": "Keep it simple."}))
 
