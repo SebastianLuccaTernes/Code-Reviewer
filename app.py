@@ -88,7 +88,7 @@ def trigger(event, payload):
     if event == "pull_request" and payload["action"] in ("opened", "ready_for_review"):
         pr = payload["pull_request"]
         commit = f"{repo}@{pr['head']['sha']}"
-        if pr["draft"] or commit in reviewed:
+        if pr["draft"] or pr["user"]["login"] == "dependabot[bot]" or commit in reviewed:
             return None
         reviewed.add(commit)
         return repo, pr["number"], False
