@@ -107,14 +107,19 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
     diff = "diff --git a/x.py b/x.py\n+print('hi')\n"
     review = "Looks good."
     post_status = 201
+    approve_status = 200
 
     def setUp(self):
         app.reviewed.clear()
-        self.calls, self.posted = [], []
+        self.calls, self.posted, self.approvals = [], [], []
 
         def github_api(request):
             if request.method == "POST":
-                self.posted.append((request.url.path, json.loads(request.content)["body"]))
+                data = json.loads(request.content)
+                self.posted.append((request.url.path, data["body"]))
+                if request.url.path.endswith("/reviews"):
+                    self.approvals.append((data["event"], data["commit_id"]))
+                    return httpx.Response(self.approve_status, json={})
                 return httpx.Response(self.post_status, json={})
             if request.headers["accept"] == "application/vnd.github.diff":
                 return httpx.Response(200, text=self.diff)
@@ -145,7 +150,7 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("acme/widgets@abc123", app.reviewed)
 
     async def test_agent_gets_prompt_and_pr_but_no_github_token(self):
-        self.assertEqual(await app.run_review("acme/widgets", 7), "Looks good.")
+        self.assertEqual(await app.run_review("acme/widgets", 7), ("Looks good.", "abc123"))
         cmd, env, stdin = self.calls[-1]
         self.assertEqual(cmd[:2], ["claude", "-p"])
         self.assertIn("Write in German", cmd[-1])
@@ -181,6 +186,30 @@ class ReviewTest(unittest.IsolatedAsyncioTestCase):
     async def test_review_is_posted_as_marked_comment(self):
         await app.review("acme/widgets", 7, manual=False)
         self.assertEqual(self.posted, [("/repos/acme/widgets/issues/7/comments", f"{app.MARKER}\nLooks good.")])
+
+    async def test_verdict_line_is_removed_and_approves_only_when_enabled(self):
+        self.review = "Looks good.\n\n**VERDICT: APPROVE**\n"
+        await app.review("acme/widgets", 7, manual=False)
+        self.assertEqual(self.posted, [("/repos/acme/widgets/issues/7/comments", f"{app.MARKER}\nLooks good.")])
+        with mock.patch.object(app, "APPROVE_CLEAN_REVIEWS", True):
+            await app.review("acme/widgets", 7, manual=False)
+            self.review = "Bug in x.py:1.\nVERDICT: COMMENT"
+            await app.review("acme/widgets", 7, manual=False)
+        self.assertEqual(self.posted[1:], [("/repos/acme/widgets/pulls/7/reviews", f"{app.MARKER}\nLooks good."),
+                                           ("/repos/acme/widgets/issues/7/comments", f"{app.MARKER}\nBug in x.py:1.")])
+        self.assertEqual(self.approvals, [("APPROVE", "abc123")])
+
+    def test_only_a_verdict_on_its_own_last_line_counts(self):
+        for text in ("Fine. VERDICT: APPROVE", "VERDICT: APPROVE\nBut x.py:1 crashes.", "VERDICT: MAYBE", "Fine."):
+            self.assertEqual(app.split_verdict(text)[1], False, text)
+        self.assertEqual(app.split_verdict("VERDICT: approve"), ("", True))
+
+    async def test_refused_approval_falls_back_to_a_comment(self):
+        self.review, self.approve_status = "Looks good.\nVERDICT: APPROVE", 422
+        with mock.patch.object(app, "APPROVE_CLEAN_REVIEWS", True), self.assertLogs("reviewer", "WARNING"):
+            await app.review("acme/widgets", 7, manual=False)
+        self.assertEqual([path for path, _ in self.posted],
+                         ["/repos/acme/widgets/pulls/7/reviews", "/repos/acme/widgets/issues/7/comments"])
 
     async def test_failed_review_is_reported_only_when_requested_manually(self):
         self.review = ""
