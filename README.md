@@ -107,6 +107,7 @@ All settings come from `.env` (see `.env.example`).
 | `MAX_CONCURRENT_REVIEWS` | `2` | |
 | `MAX_DIFF_CHARS` | `150000` | Longer diffs are truncated |
 | `REVIEW_TIMEOUT` | `1800` | Seconds per review |
+| `APPROVE_CLEAN_REVIEWS` | `false` | `true`: approve the PR when the review finds nothing that must be fixed before merging (see Known limits) |
 
 The service runs:
 
@@ -136,6 +137,9 @@ Known limits:
 - GitHub reports private organization members as `CONTRIBUTOR`, so they can only use `@claude review` once their membership is public or they are collaborators.
 - GitHub refuses diffs over 300 files or 20000 changed lines; such PRs can't be reviewed.
 - Which commits were reviewed is kept in memory only; after a restart a commit may be reviewed again.
+- With `APPROVE_CLEAN_REVIEWS=true`, a PR author who talks the model into a clean verdict gets an approval, and that approval counts toward required reviews in branch protection. Don't let it be the only required approval.
+- GitHub doesn't let anyone approve their own PR. PRs opened by the `GH_TOKEN` user get a comment instead; use a token from a separate bot account to approve them.
+- An approval is for one commit. Later pushes or a later review with findings don't remove it unless branch protection dismisses stale approvals.
 
 ## Development
 

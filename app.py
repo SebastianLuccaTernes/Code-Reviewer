@@ -38,12 +38,14 @@ CLAUDE_MAX_TURNS = os.getenv("CLAUDE_MAX_TURNS", "40")
 CLAUDE_EXTRA_ARGS = os.getenv("CLAUDE_EXTRA_ARGS", "")
 MAX_DIFF_CHARS = int(os.getenv("MAX_DIFF_CHARS", "150000"))
 REVIEW_TIMEOUT = int(os.getenv("REVIEW_TIMEOUT", "1800"))
+APPROVE_CLEAN_REVIEWS = os.getenv("APPROVE_CLEAN_REVIEWS", "").lower() in ("1", "true", "yes")
 
 RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt/rules.md")  # the mounted folder
 MARKER = "<!-- claude-review-bot -->"
 MAX_COMMENT_CHARS = 60000
 MAX_PAYLOAD_BYTES = 2 * 2**20  # pull_request/issue_comment payloads stay under 1 MB (texts max 65536 chars)
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+VERDICT = re.compile(r"(?:\A|\n)[ \t*`]*VERDICT:[ \t]*(APPROVE|COMMENT)[ \t*`]*\Z", re.IGNORECASE)  # rules.md asks for it
 GIT_AUTH = base64.b64encode(f"x-access-token:{GH_TOKEN}".encode()).decode()
 
 # The agent runs as the same user; a non-dumpable process keeps its /proc/<pid>/environ (GH_TOKEN) from it.
@@ -103,8 +105,9 @@ def trigger(event, payload):
 async def review(repo, number, manual):
     try:
         async with slots, asyncio.timeout(REVIEW_TIMEOUT):
-            text = await run_review(repo, number)
-        await post_comment(repo, number, text)
+            text, sha = await run_review(repo, number)
+        text, approve = split_verdict(text)
+        await post_comment(repo, number, text, sha if approve and APPROVE_CLEAN_REVIEWS else None)
         log.info("posted review on %s#%s", repo, number)
     except Exception as e:
         log.exception("review of %s#%s failed", repo, number)
@@ -149,7 +152,14 @@ async def run_review(repo, number):
         text = await run(claude_command(prompt), env | {CLAUDE_AUTH_VAR: CLAUDE_AUTH}, cwd=src, stdin=pr_text)
     if not text.strip():
         raise RuntimeError("claude returned an empty review")
-    return text
+    return text, sha
+
+
+def split_verdict(text):
+    """Remove the trailing VERDICT line; return (text, True if it says APPROVE)."""
+    text = text.rstrip()
+    m = VERDICT.search(text)
+    return (text[:m.start()].rstrip(), m[1].upper() == "APPROVE") if m else (text, False)
 
 
 def claude_command(prompt):
@@ -183,10 +193,19 @@ async def run(cmd, env, cwd=None, stdin=""):
     return out.decode(errors="replace")
 
 
-async def post_comment(repo, number, text):
+async def post_comment(repo, number, text, approve_sha=None):
+    """Post the review as a comment, or as an approval of commit approve_sha."""
     body = f"{MARKER}\n{text}"
     for secret in (WEBHOOK_SECRET, GH_TOKEN, GIT_AUTH, CLAUDE_AUTH):
         body = body.replace(secret, "[redacted]")  # last line of defense if the agent was talked into leaking one
     async with github() as gh:
+        if approve_sha:  # commit_id: approve the reviewed commit, not whatever was pushed during the review
+            r = await gh.post(f"/repos/{repo}/pulls/{number}/reviews",
+                              json={"event": "APPROVE", "commit_id": approve_sha, "body": body[:MAX_COMMENT_CHARS]})
+            if r.status_code != 422:
+                r.raise_for_status()
+                return
+            # e.g. the token's user opened the PR, and GitHub doesn't let anyone approve their own PR
+            log.warning("could not approve %s#%s, posting a comment instead: %s", repo, number, r.text[:200])
         r = await gh.post(f"/repos/{repo}/issues/{number}/comments", json={"body": body[:MAX_COMMENT_CHARS]})
         r.raise_for_status()
